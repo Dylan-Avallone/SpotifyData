@@ -9,11 +9,20 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")  # Prevents GUI errors
 import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 from spotipy.oauth2 import SpotifyOAuth
 from flask_cors import CORS
 import sqlite3
+import textwrap
+import openai
+import re
 dotenv.load_dotenv()
 
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+#Fonts
+poppins_path = "fonts/Poppins-Regular.ttf"
+poppins_font = fm.FontProperties(fname=poppins_path)
 # Flask App Setup
 app = Flask(__name__)
 CORS(app)
@@ -41,7 +50,9 @@ sp_oauth = SpotifyOAuth(
     scope="user-top-read user-read-recently-played"
 
 )
-# Store uploaded dataset globally
+
+music_data = None 
+genre_cache = {}
 
 
 # 🌎 Home Route
@@ -85,12 +96,139 @@ def summary():
 
 
 
-def update_missing_genres():
-    """Finds songs with missing genres and updates them using the Spotify API."""
+
+def get_genre(artist_name):
+    """Fetches the genre of an artist using GPT-4o-mini if Spotify provides no genre."""
+    if artist_name in genre_cache:
+        return genre_cache[artist_name]  # ✅ Use cached value
+
+    print(f"⚠️ {artist_name} - No genres found on Spotify. Fetching from OpenAI...")
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",  # ✅ Uses GPT-4o-mini for cost efficiency
+            messages=[{"role": "user", "content": f"Provide only the primary genre of {artist_name} in one word."}],
+            max_tokens=3,  # ✅ Further limits response length
+            temperature=0  # ✅ Ensures deterministic output
+        )
+
+        raw_genre = response["choices"][0]["message"]["content"].strip()
+
+        # 🔥 Extract only the first valid genre-like word
+        genre_match = re.search(r"\b([A-Za-z-]+)\b", raw_genre)
+        genre = genre_match.group(1) if genre_match else "Unknown"
+
+        print(f"🎨 AI-Fetched Genre for {artist_name}: {genre}")
+
+    except Exception as e:
+        print(f"❌ ERROR: Failed to fetch genre for {artist_name} - {e}")
+        genre = "Unknown"
+
+    genre_cache[artist_name] = genre  # ✅ Save to cache
+    return genre
+
+@app.route('/update-data', methods=['GET'])
+def update_data():
+    """Fetches and updates the user's latest listening history and genres before visualizing data."""
+    try:
+        print("🔄 Updating user data...")
+        
+        # Step 1: Fetch latest Spotify listening history
+        spotify_listening_history()
+        
+        # Step 2: Update missing genres using Spotify API or GPT-4o-mini
+        update_missing_genres()
+        
+        print("✅ Data update complete.")
+        return jsonify({"message": "✅ Data update complete."})
+    except Exception as e:
+        print(f"❌ ERROR: Data update failed - {e}")
+        return jsonify({"error": "Data update failed", "details": str(e)})
+
+
+def update_existing_unknown_genres():
+    """Finds and updates all 'Unknown' genres in the database using GPT-4o-mini."""
     conn = sqlite3.connect("spotify_data.db")
     cursor = conn.cursor()
 
-    # Fetch all songs without a genre
+    # Find all artists with 'Unknown' genre
+    cursor.execute("SELECT DISTINCT artist FROM listening_history WHERE genre = 'Unknown'")
+    unknown_artists = cursor.fetchall()
+
+    if not unknown_artists:
+        print("✅ No 'Unknown' genres to update.")
+        conn.close()
+        return
+
+    print(f"🔄 Updating {len(unknown_artists)} 'Unknown' genres...")
+
+    updated = 0
+    for artist_tuple in unknown_artists:
+        artist_name = artist_tuple[0]
+        new_genre = get_genre(artist_name)  # 🔥 Fetch new genre
+
+        if new_genre and new_genre != "Unknown":
+            cursor.execute("UPDATE listening_history SET genre = ? WHERE artist = ?", (new_genre, artist_name))
+            conn.commit()
+            print(f"✅ Updated {artist_name} -> {new_genre}")
+            updated += 1
+
+    conn.close()
+    print(f"✅ Finished updating {updated} 'Unknown' genres.")
+
+# Call this function **after** fetching the listening history
+update_existing_unknown_genres()
+
+
+
+def reset_invalid_genres():
+    """Finds and resets invalid genres in the database."""
+    conn = sqlite3.connect("spotify_data.db")
+    cursor = conn.cursor()
+
+    # Find all genres currently stored
+    cursor.execute("SELECT DISTINCT artist, genre FROM listening_history")
+    all_genres = cursor.fetchall()
+
+    invalid_genres = []
+    for artist, genre in all_genres:
+        # ✅ If genre contains full sentences, artist names, or phrases, it's invalid
+        if len(genre.split()) > 3 or not re.match(r"^[a-zA-Z\s-]+$", genre):
+            invalid_genres.append((artist, genre))
+
+        # ✅ Check for artist mentions in genre (e.g., "Chase Shakur is known for R&B")
+        if artist.lower() in genre.lower():
+            invalid_genres.append((artist, genre))
+
+    print(f"🚨 Found {len(invalid_genres)} invalid genres.")
+
+    # Reset all invalid genres to 'Unknown'
+    for artist, genre in invalid_genres:
+        cursor.execute("UPDATE listening_history SET genre = 'Unknown' WHERE artist = ?", (artist,))
+        print(f"🛑 Reset genre for {artist} -> 'Unknown' (Was: {genre})")
+
+    conn.commit()
+    conn.close()
+
+    print("✅ Reset complete. Re-fetching genres now...")
+    update_existing_unknown_genres()  # 🔥 Re-run OpenAI genre fetching
+
+# Run this again to ensure full cleanup
+reset_invalid_genres()
+
+
+
+
+
+
+
+
+def update_missing_genres():
+    """Finds songs with missing genres and updates them using Spotify API or GPT-4o-mini."""
+    conn = sqlite3.connect("spotify_data.db")
+    cursor = conn.cursor()
+
+    # Fetch all artists without a genre
     cursor.execute("SELECT DISTINCT artist FROM listening_history WHERE genre IS NULL OR genre = 'Unknown'")
     missing_artists = cursor.fetchall()
 
@@ -112,32 +250,37 @@ def update_missing_genres():
     updated = 0
     for artist_tuple in missing_artists:
         artist_name = artist_tuple[0]
+        genre = "Unknown"
+
         try:
-            # 🔍 Fetch artist details
+            # 🔍 Fetch artist details from Spotify
             results = sp.search(q=artist_name, type="artist", limit=1)
             if "artists" in results and results["artists"]["items"]:
                 artist_data = results["artists"]["items"][0]
                 genres = artist_data.get("genres", [])
 
-                # 🔥 Log what we're fetching
-                print(f"🎵 {artist_name}: Genres from Spotify API -> {genres}")
-
+                # ✅ Use first genre from Spotify if available
                 genre = genres[0] if genres else "Unknown"
 
-                # Update the database
-                conn = sqlite3.connect("spotify_data.db")
-                cursor = conn.cursor()
-                cursor.execute("UPDATE listening_history SET genre = ? WHERE artist = ?", (genre, artist_name))
-                conn.commit()
-                conn.close()
-
-                print(f"✅ Updated {artist_name} -> {genre}")
-                updated += 1
-
         except Exception as e:
-            print(f"⚠️ ERROR: Could not fetch genre for {artist_name}: {e}")
+            print(f"⚠️ ERROR: Could not fetch Spotify genre for {artist_name}: {e}")
+
+        # 🔥 If still "Unknown", use GPT-4o-mini
+        if genre == "Unknown":
+            genre = get_genre(artist_name)
+
+        # ✅ Update database with final genre
+        conn = sqlite3.connect("spotify_data.db")
+        cursor = conn.cursor()
+        cursor.execute("UPDATE listening_history SET genre = ? WHERE artist = ?", (genre, artist_name))
+        conn.commit()
+        conn.close()
+
+        print(f"✅ Final Genre for {artist_name}: {genre}")
+        updated += 1
 
     print(f"✅ Genre update complete! Updated {updated} artists.")
+
 
 
 
@@ -148,8 +291,8 @@ def update_missing_genres():
 @app.route('/visualize', methods=['GET'])
 def visualize():
     global music_data
-    if music_data is None:
-        return jsonify({'error': '⚠️ No data uploaded'})
+    if music_data is None or music_data.empty:
+        return jsonify({'error': '⚠️ No data available to generate a chart'})
 
     plt.figure(figsize=(10, 5))
     top_artists = music_data['artist'].value_counts().head(10)
@@ -158,13 +301,23 @@ def visualize():
     plt.ylabel('Number of Songs')
     plt.title('Top 10 Artists')
     plt.xticks(rotation=45)
-    chart_path = 'static/top_artists.png'
+
+    # 🛠️ Ensure static directory exists
+    static_dir = os.path.join(os.getcwd(), 'static')
+    if not os.path.exists(static_dir):
+        os.makedirs(static_dir)
+
+    # 📁 Save the Chart
+    chart_path = os.path.join(static_dir, "top_artists_chart.png")
     plt.savefig(chart_path)
     plt.close()
 
-    return jsonify({'image_url': chart_path})
+    print(f"✅ DEBUG: Chart saved at: {chart_path}")
 
-#pie graph for genres
+    return jsonify({'image_url': "/static/top_artists_chart.png"})
+
+
+# 📊 Pie Chart for Genres with Improved Label Handling
 @app.route('/visualize-genres')
 def visualize_genres():
     conn = sqlite3.connect("spotify_data.db")
@@ -177,32 +330,52 @@ def visualize_genres():
     # Count occurrences of each genre
     genre_counts = df["genre"].value_counts()
 
-    # Create a pie chart
-    plt.figure(figsize=(8, 8))
-    genre_counts.plot(kind="pie", autopct="%1.1f%%", startangle=140, legend=False)
-    plt.title("Top Genres Played")
-    plt.ylabel("")  # Hide the y-axis label
+    # 🎨 Create a transparent pie chart
+    fig, ax = plt.subplots(figsize=(7, 7))
+    fig.patch.set_alpha(0)  # Ensure background transparency
 
-    # Save the pie chart
+    wedges, texts, autotexts = ax.pie(
+        genre_counts,
+        labels=genre_counts.index,
+        autopct='%1.1f%%',
+        startangle=140,
+        pctdistance=0.85,  # Push percentage values inward
+        textprops={'fontsize': 10, 'color': 'white','fontproperties':poppins_font}  # Make all text white
+    )
+
+    # 🎨 Move small genre labels to the top-left
+    small_genre_texts = []
+    x_offset, y_offset = -1.8, 1.2
+    for i, (wedge, label, percentage) in enumerate(zip(wedges, texts, autotexts)):
+        pct = float(percentage.get_text().replace('%', ''))
+        if pct < 5:
+            label.set_visible(False)
+            percentage.set_visible(False)
+
+            color = wedge.get_facecolor()
+            small_genre_texts.append((label.get_text(), pct, color))
+
+    for i, (genre, pct, color) in enumerate(small_genre_texts):
+        ax.text(
+            x_offset, y_offset - (i * 0.1),
+            f"{genre}: {pct:.1f}%",
+            fontsize=10,
+            color=color,
+            fontweight="bold",
+            fontproperties=poppins_font
+        )
+
+    # 🎵 Set title and remove white background
+    ax.set_title("Top Genres Played", fontsize=14, fontweight='bold', color='white')
+    plt.tight_layout()
+
+    # 📁 Save the pie chart (Transparent)
     chart_path = "static/genre_pie_chart.png"
-    plt.savefig(chart_path)
+    plt.savefig(chart_path, dpi=300, bbox_inches="tight", transparent=True)
     plt.close()
 
     return jsonify({"image_url": chart_path})
 
-
-
-# 📊 Interactive Visualization (Returns JSON for JS to process)
-@app.route('/interactive_chart', methods=['GET'])
-def interactive_chart():
-    global music_data
-    if music_data is None:
-        return jsonify({'error': '⚠️ No data uploaded'})
-
-    top_artists = music_data['artist'].value_counts().head(10)
-    chart_data = [{"artist": artist, "count": int(count)} for artist, count in top_artists.items()]
-    
-    return jsonify(chart_data)
 
 # 🎵 Basic CSV-Based Recommendation System
 @app.route('/recommend', methods=['POST'])
@@ -252,6 +425,7 @@ def init_db():
 init_db()
 
 def save_to_db(tracks):
+    """Saves track data to the SQLite database, ensuring genres are set."""
     conn = sqlite3.connect("spotify_data.db")
     cursor = conn.cursor()
 
@@ -259,6 +433,7 @@ def save_to_db(tracks):
 
     for track in tracks:
         artist_id = track.get("artist_id")  # Get artist ID
+        artist_name = track["artist"]
 
         # Fetch genre if possible
         if artist_id:
@@ -267,25 +442,26 @@ def save_to_db(tracks):
                 genre_list = artist_info.get("genres", [])
                 genre = genre_list[0] if genre_list else "Unknown"
             except Exception as e:
-                print(f"⚠️ WARNING: Could not fetch genre for {track['artist']}: {e}")
+                print(f"⚠️ WARNING: Could not fetch genre for {artist_name}: {e}")
                 genre = "Unknown"
         else:
             genre = "Unknown"
+
+        # 🔥 If still unknown, use GPT-4o-mini
+        if genre == "Unknown":
+            genre = get_genre(artist_name)
 
         try:
             cursor.execute(
                 """INSERT INTO listening_history (track_name, artist, played_at, genre) 
                    VALUES (?, ?, ?, ?)""",
-                (track["track_name"], track["artist"], track["played_at"], genre)
+                (track["track_name"], artist_name, track["played_at"], genre)
             )
         except sqlite3.IntegrityError:
             pass  # Avoid duplicate entries
 
     conn.commit()
     conn.close()
-
-
-
 
 
 
@@ -312,6 +488,8 @@ def get_token():
             return None
 
     return token_info["access_token"]
+
+
 
 
 
@@ -361,7 +539,7 @@ def spotify_listening_history():
 
 
 
-#visualization
+#bar chart for top artists
 @app.route('/visualize-history')
 def visualize_history():
     conn = sqlite3.connect("spotify_data.db")
@@ -371,18 +549,31 @@ def visualize_history():
     if df.empty:
         return jsonify({"error": "No listening history available."})
 
-    #  Top Artists Chart
-    plt.figure(figsize=(10, 5))
+    # 🎨 Plot settings
+    fig, ax = plt.subplots(figsize=(10, 5))
+    fig.patch.set_alpha(0)  # Ensure background transparency
+    ax.set_facecolor("#121212")  # Match page background (dark gray)
+
+    # 🎵 Top 10 Artists Bar Chart
     top_artists = df['artist'].value_counts().head(10)
-    top_artists.plot(kind='bar', color='purple')
-    plt.xlabel('Artist')
-    plt.ylabel('Times Played')
-    plt.title('Top 10 Most Played Artists')
-    plt.xticks(rotation=45)
-    plt.savefig("static/top_artists.png")
+    top_artists.plot(kind='bar', color='purple', ax=ax)
+
+    # 🎨 Formatting
+    ax.set_xlabel("Artist", fontsize=12, color="white")
+    ax.set_ylabel("Times Played", fontsize=12, color="white")
+    ax.set_title("Top 10 Most Played Artists", fontsize=14, fontweight="bold", color="white")
+    ax.tick_params(axis='x', colors="white", rotation=45)
+    ax.tick_params(axis='y', colors="white")
+
+    # 📁 Save the Chart (Transparent)
+    chart_path = "static/top_artists_chart.png"
+    plt.savefig(chart_path, dpi=300, bbox_inches="tight", transparent=True)
     plt.close()
 
-    return jsonify({"image_url": "static/top_artists.png"})
+    return jsonify({"image_url": chart_path})
+
+
+
 
 
 @app.route('/spotify-top-artists')
@@ -512,6 +703,9 @@ def download_csv():
     music_data.to_csv(csv_path, index=False)
     return send_file(csv_path, as_attachment=True)
 
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    return send_file(os.path.join('static', filename))
 
 
 

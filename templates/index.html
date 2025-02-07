@@ -5,71 +5,127 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Music Data Analysis</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;700&display=swap" rel="stylesheet">
+
+  <style>
+    /* Loading screen styles */
+    #loadingScreen {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+      font-size: 20px;
+      text-align: center;
+      padding-top: 20%;
+      z-index: 9999;
+    }
+  </style>
+
 </head>
 <body>
-  <h1>Music Data Analysis App</h1>
+  <h1>Spotify Data Analysis</h1>
 
-  <!-- File Upload Form -->
-  <form id="uploadForm" enctype="multipart/form-data">
-    <input type="file" id="fileInput" name="file">
-    <button type="submit">Upload</button>
-  </form>
-  
-  <h3>Summary:</h3>
-  <pre id="summaryOutput"></pre>
+  <!-- 🎵 Spotify Login -->
+  <a href="{{ url_for('spotify_login') }}">
+      <button id="loginButton">Login with Spotify</button>
+  </a>
 
-  <!-- Static Visualization -->
-  <h3>Top Artists Chart (Static):</h3>
-  <img id="chartImage" src="" alt="Top Artists Chart" style="display:none; width: 80%; max-width: 600px;">
+  <!-- Loading Screen -->
+  <div id="loadingScreen">Updating your data... Please wait.</div>
 
-  <!-- Interactive Visualization -->
-  <h3>Interactive Top Artists Chart:</h3>
-  <button id="interactiveBtn">Show Interactive Chart</button>
-  <div id="interactiveChart"></div>
+  <!-- Charts Container (Hidden until data is ready) -->
+  <div id="chartsContainer" style="display: none;">
+    <!-- 🎵 Bar Chart on the Left -->
+    <div id="barChartContainer">
+        <h3>Top 10 Most Played Artists</h3>
+        <img id="historyChart" src="" alt="Listening History Chart">
+    </div>
 
-  <!-- 🎨 New Visualization Section -->
-  <h3>Spotify Listening History Analysis:</h3>
-  <button id="visualizeHistoryBtn">Visualize Listening History</button>
-  <img id="historyChart" src="" alt="Listening History Chart" style="display:none; width: 80%; max-width: 600px;">
+    <!-- 🎨 Pie Chart on the Right -->
+    <div id="pieChartContainer">
+        <h3>Genre Distribution</h3>
+        <img id="genreChart" src="" alt="Genre Pie Chart">
+    </div>
+  </div>
 
-  <!-- Recommendation Section -->
-  <h3>Get Recommendations:</h3>
-  <form id="recommendForm">
-    <input type="text" id="queryInput" placeholder="Enter artist or song name">
-    <button type="submit">Recommend</button>
-  </form>
-  <pre id="recommendOutput"></pre>
+  <script>
+    document.addEventListener("DOMContentLoaded", function () {
+      checkLoginStatus();
+    });
 
-  <script src="{{ url_for('static', filename='script.js') }}"></script>
-  <h1>Music Recommendation App</h1>
+    function checkLoginStatus() {
+      fetch('/spotify-top-artists')
+        .then(response => response.json())
+        .then(data => {
+          if (!data.error) {
+            document.getElementById("chartsContainer").style.display = "flex"; 
+            updateDataAndLoadVisuals();
+          } else {
+            fetch('/spotify-listening-history')
+              .then(response => response.json())
+              .then(historyData => {
+                if (!historyData.error) {
+                  document.getElementById("chartsContainer").style.display = "flex";
+                  updateDataAndLoadVisuals();
+                }
+              });
+          }
+        });
+    }
 
-<!-- Spotify Login -->
-<a href="{{ url_for('spotify_login') }}">
-    <button onclick="console.log('🔍 Login button clicked!');">Login with Spotify</button>
-</a>
+    function updateDataAndLoadVisuals() {
+      document.getElementById("loadingScreen").style.display = "block";
 
-<!-- Fetch Top Artists -->
-<button onclick="fetchSpotifyTopArtists()">Get My Top Artists</button>
-<pre id="spotifyArtistsOutput"></pre>
+      fetch('/update-data')
+        .then(response => response.json())
+        .then(data => {
+          console.log("✅ Data update completed:", data);
+          checkVisualizationReadiness();
+        })
+        .catch(error => console.error("❌ ERROR: Updating data failed:", error));
+    }
 
-<!-- Get Spotify Recommendations -->
-<button onclick="fetchSpotifyRecommendations()">Get Song Recommendations</button>
-<pre id="spotifyRecommendationsOutput"></pre>
+    function checkVisualizationReadiness() {
+      let attempts = 0;
+      const maxAttempts = 10;
 
-<h3>Genre Distribution</h3>
-<img id="genreChart" src="" alt="Genre Pie Chart">
+      function tryLoadingVisuals() {
+        if (attempts >= maxAttempts) {
+          console.error("❌ ERROR: Visualizations did not generate in time.");
+          document.getElementById("loadingScreen").style.display = "none";
+          return;
+        }
 
-<script>
-  fetch('/visualize-genres')
-    .then(response => response.json())
-    .then(data => {
-      if (data.image_url) {
-        document.getElementById("genreChart").src = data.image_url;
+        fetch('/visualize-history')
+          .then(response => response.json())
+          .then(data => {
+            if (data.image_url) {
+              document.getElementById("historyChart").src = data.image_url;
+              fetch('/visualize-genres')
+                .then(response => response.json())
+                .then(genreData => {
+                  if (genreData.image_url) {
+                    document.getElementById("genreChart").src = genreData.image_url;
+                    document.getElementById("loadingScreen").style.display = "none"; // Hide loading when charts load
+                  } else {
+                    setTimeout(tryLoadingVisuals, 2000); // Try again in 2 seconds
+                  }
+                });
+            } else {
+              setTimeout(tryLoadingVisuals, 2000); // Try again in 2 seconds
+            }
+          });
+
+        attempts++;
       }
-    })
-    .catch(error => console.error("Error loading genre chart:", error));
-</script>
 
+      tryLoadingVisuals();
+    }
+  </script>
 
 </body>
 </html>

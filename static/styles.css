@@ -1,26 +1,104 @@
 body {
-    font-family: Arial, sans-serif;
-    text-align: center;
-    margin: 30px;
+  font-family: 'Poppins', sans-serif;
+  text-align: center;
+  margin: 30px;
+  background-color: #121212; /* Dark background like Spotify */
+  color: #FFFFFF; /* White text for contrast */
+}
+
+input, button {
+  margin: 10px;
+  padding: 10px;
+  border-radius: 5px;
+}
+
+button {
+  background-color: #1DB954; /* Spotify green */
+  color: white;
+  border: none;
+  cursor: pointer;
+  font-weight: bold;
+  transition: background 0.3s ease;
+}
+
+button:hover {
+  background-color: #17a648; /* Slightly darker green on hover */
+}
+
+/* 🎵 Charts Container */
+#chartsContainer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 20px;
+  width: 90%;
+  max-width: 1200px;
+  margin: 30px auto;
+  background: #181818;
+  padding: 20px;
+  border-radius: 10px;
+  box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
+}
+
+/* 🎵 Individual Chart Containers */
+.chart-container {
+  flex: 1;
+  min-width: 500px; /* ✅ Forces both charts to be properly sized */
+  text-align: center;
+}
+
+/* 🎵 Bar Chart */
+#historyChart {
+  width: 100%;
+  max-width: 500px;
+  border: 2px solid #1DB954;
+  border-radius: 10px;
+  background-color: #222222;
+}
+
+/* 🎨 Pie Chart */
+#genreChart {
+  width: 100%;
+  max-width: 500px;
+  border: 2px solid #1DB954;
+  border-radius: 10px;
+  background-color: #222222;
+}
+
+
+/* 🔥 Login Button */
+#loginButton {
+  background-color: #1DB954;
+  padding: 15px 20px;
+  font-size: 18px;
+  border-radius: 25px;
+  text-transform: uppercase;
+  transition: all 0.3s ease;
+}
+
+#loginButton:hover {
+  background-color: #17a648;
+  transform: scale(1.05);
+}
+
+/* 📱 Mobile Responsiveness */
+@media (max-width: 768px) {
+  #chartsContainer {
+    flex-direction: column; /* Stacks charts on smaller screens */
+    align-items: center;
   }
-  
-  input, button {
-    margin: 10px;
-    padding: 10px;
+
+  .chart-container {
+    width: 100%;
   }
-  
-  button {
-    background-color: #007bff;
-    color: white;
-    border: none;
-    cursor: pointer;
+
+  #historyChart, #genreChart {
+    max-width: 100%;
   }
-  
-  pre {
-    background: #f4f4f4;
-    padding: 10px;
-    border-radius: 5px;
-    display: inline-block;
-    text-align: left;
-  }
-  
+}
+
+/* Make the text pop */
+h1, h3 {
+  color: #FFFFFF;
+}
