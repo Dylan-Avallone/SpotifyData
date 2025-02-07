@@ -1,0 +1,10 @@
+# Ignore Python virtual environment
+venvmusic/
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# Ignore environment variables
+.env
+ai.env
