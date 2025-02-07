@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Music Data Analysis</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <h1>Music Data Analysis App</h1>
+
+  <!-- File Upload Form -->
+  <form id="uploadForm" enctype="multipart/form-data">
+    <input type="file" id="fileInput" name="file">
+    <button type="submit">Upload</button>
+  </form>
+  
+  <h3>Summary:</h3>
+  <pre id="summaryOutput"></pre>
+
+  <!-- Static Visualization -->
+  <h3>Top Artists Chart (Static):</h3>
+  <img id="chartImage" src="" alt="Top Artists Chart" style="display:none; width: 80%; max-width: 600px;">
+
+  <!-- Interactive Visualization -->
+  <h3>Interactive Top Artists Chart:</h3>
+  <button id="interactiveBtn">Show Interactive Chart</button>
+  <div id="interactiveChart"></div>
+
+  <!-- 🎨 New Visualization Section -->
+  <h3>Spotify Listening History Analysis:</h3>
+  <button id="visualizeHistoryBtn">Visualize Listening History</button>
+  <img id="historyChart" src="" alt="Listening History Chart" style="display:none; width: 80%; max-width: 600px;">
+
+  <!-- Recommendation Section -->
+  <h3>Get Recommendations:</h3>
+  <form id="recommendForm">
+    <input type="text" id="queryInput" placeholder="Enter artist or song name">
+    <button type="submit">Recommend</button>
+  </form>
+  <pre id="recommendOutput"></pre>
+
+  <script src="{{ url_for('static', filename='script.js') }}"></script>
+  <h1>Music Recommendation App</h1>
+
+<!-- Spotify Login -->
+<a href="{{ url_for('spotify_login') }}">
+    <button onclick="console.log('🔍 Login button clicked!');">Login with Spotify</button>
+</a>
+
+<!-- Fetch Top Artists -->
+<button onclick="fetchSpotifyTopArtists()">Get My Top Artists</button>
+<pre id="spotifyArtistsOutput"></pre>
+
+<!-- Get Spotify Recommendations -->
+<button onclick="fetchSpotifyRecommendations()">Get Song Recommendations</button>
+<pre id="spotifyRecommendationsOutput"></pre>
+
+<h3>Genre Distribution</h3>
+<img id="genreChart" src="" alt="Genre Pie Chart">
+
+<script>
+  fetch('/visualize-genres')
+    .then(response => response.json())
+    .then(data => {
+      if (data.image_url) {
+        document.getElementById("genreChart").src = data.image_url;
+      }
+    })
+    .catch(error => console.error("Error loading genre chart:", error));
+</script>
+
+
+</body>
+</html>
